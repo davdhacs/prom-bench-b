@@ -61,7 +61,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: prometheus
-          key: bench-bin-${{ runner.arch }}-${{ github.sha }}
+          key: bench-bin-${{ runner.arch }}-${{ inputs.commit || github.sha }}
           # no restore-keys: would restore a stale binary from a previous commit
 
       - name: Build prometheus (skip if binary restored)
