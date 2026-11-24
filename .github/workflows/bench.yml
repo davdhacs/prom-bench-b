@@ -62,8 +62,7 @@ jobs:
         with:
           path: prometheus
           key: bench-bin-${{ runner.arch }}-${{ github.sha }}
-          restore-keys: |
-            bench-bin-${{ runner.arch }}-
+          # no restore-keys: would restore a stale binary from a previous commit
 
       - name: Build prometheus (skip if binary restored)
         if: steps.cache-binary.outputs.cache-hit != 'true'
