@@ -1,0 +1,92 @@
+name: bench
+# Arm B: incumbent + build-output caching. Same GOCACHE approach as arm A,
+# but also cache the prometheus binary keyed on the commit SHA with
+# restore-keys fallback. On a re-run of the same commit, the binary is
+# restored without running Go at all.
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: 'prometheus commit SHA to replay'
+        required: false
+        type: string
+
+permissions:
+  actions: write
+
+env:
+  GO_VERSION: "1.27"
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Runner record + calibration probe
+        run: |
+          { date -u +%FT%TZ; grep -m1 'model name' /proc/cpuinfo; echo "nproc=$(nproc)"; } | tee "$RUNNER_TEMP/runner.txt"
+          curl -sSfLO https://sqlite.org/2024/sqlite-amalgamation-3450100.zip
+          unzip -q sqlite-amalgamation-3450100.zip
+          cd sqlite-amalgamation-3450100
+          for i in 1 2 3; do
+            rm -f sqlite3.o
+            S=$(date +%s%3N); gcc -O2 -c sqlite3.c; E=$(date +%s%3N)
+            echo "calib_ms=$((E-S))"
+          done | tee "$RUNNER_TEMP/calib.txt"
+
+      - name: Checkout prometheus at the target commit
+        uses: actions/checkout@v4
+        with:
+          repository: prometheus/prometheus
+        with:
+          ref: ${{ inputs.commit || 'HEAD~1' }}
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Cache Go build and module caches
+        uses: actions/cache@v6
+        with:
+          path: |
+            $(go env GOCACHE)
+            $(go env GOMODCACHE)
+          key: ${{ runner.os }}-go-default-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-default-
+
+      # Additional: cache the binary output (like curl arm D caching bld/)
+      - name: Cache build output
+        id: cache-binary
+        uses: actions/cache@v6
+        with:
+          path: prometheus
+          key: bench-bin-${{ runner.arch }}-${{ github.sha }}
+          restore-keys: |
+            bench-bin-${{ runner.arch }}-
+
+      - name: Build prometheus (skip if binary restored)
+        if: steps.cache-binary.outputs.cache-hit != 'true'
+        run: |
+          go build -o prometheus ./cmd/prometheus
+
+      - name: Build prometheus (binary restored, just verify)
+        if: steps.cache-binary.outputs.cache-hit == 'true'
+        run: |
+          echo "RESULT phase=build ms=0"
+          echo "(binary restored from cache)"
+
+      - name: Verify binary
+        run: |
+          test -x prometheus
+          ./prometheus --version 2>&1 | head -2
+          echo "RESULT phase=verify ok=1"
+
+      - name: Record cache usage
+        run: |
+          echo "RESULT binary_cache hit=${{ steps.cache-binary.outputs.cache-hit }}"
+          U=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+            "https://api.github.com/repos/davdhacs/prom-arm-b/actions/cache/usage")
+          printf 'RESULT quota_bytes=%s\n' "$(printf %s "$U" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("active_caches_size_in_bytes",""))')"
+          cat "$RUNNER_TEMP/runner.txt" "$RUNNER_TEMP/calib.txt" 2>/dev/null || true
