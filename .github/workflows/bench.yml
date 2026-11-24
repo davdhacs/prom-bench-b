@@ -68,13 +68,15 @@ jobs:
       - name: Build prometheus (skip if binary restored)
         if: steps.cache-binary.outputs.cache-hit != 'true'
         run: |
+          T0=$(date +%s%3N)
           go build -o prometheus ./cmd/prometheus
+          E=$(date +%s%3N)
+          echo "RESULT phase=build ms=$((E-T0))"
 
       - name: Build prometheus (binary restored, just verify)
         if: steps.cache-binary.outputs.cache-hit == 'true'
         run: |
-          echo "RESULT phase=build ms=0"
-          echo "(binary restored from cache)"
+          echo "RESULT phase=build ms=0 (binary restored from cache)"
 
       - name: Verify binary
         run: |
